@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"internal"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"time"
@@ -27,6 +28,11 @@ type Loc struct {
 	}
 }
 
+type Pokemon struct {
+	Id             int
+	Name           string
+	BaseExperience int `json:"base_experience"`
+}
 type LocArea struct {
 	ID                   int
 	Name                 string
@@ -49,6 +55,7 @@ type LocArea struct {
 var commands map[string]cliCommand
 
 func main() {
+	caughtPokemon := make(map[string]Pokemon)
 	loc := &Loc{}
 	scanner := bufio.NewScanner(os.Stdin)
 	cache := internal.NewCache(time.Duration(time.Second * 5))
@@ -89,6 +96,16 @@ func main() {
 					return fmt.Errorf("exactly one location area name is required")
 				}
 				return commandExplore(args[0], cache)
+			},
+		},
+		"catch": {
+			name:        "catch",
+			description: "Catch a Pokemon",
+			callback: func(args ...string) error {
+				if len(args) != 1 {
+					return fmt.Errorf("exactly one Pokemon name is required")
+				}
+				return commandCatch(args[0], &caughtPokemon)
 			},
 		},
 	}
@@ -232,5 +249,43 @@ func commandExplore(locationName string, cache *internal.Cache) error {
 		return err
 	}
 
+	return nil
+}
+
+func commandCatch(pokemonName string, caughtPokemon *map[string]Pokemon) error {
+
+	res, err := http.Get("https://pokeapi.co/api/v2/pokemon/" + pokemonName)
+	if err != nil {
+		return fmt.Errorf("cant find that pokemon %v. error fetching pokemon data: %v", pokemonName, err)
+	}
+	fmt.Println("Throwing a Pokeball at", pokemonName, "...")
+	defer res.Body.Close()
+	// Generate a random number between 1 and 1000
+	chance := rand.Intn(1000) + 1
+	pokemon := Pokemon{}
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return err
+	}
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("non-OK HTTP status: %s", res.Status)
+	}
+	err = json.Unmarshal(body, &pokemon)
+	if err != nil {
+		return err
+	}
+
+	if chance < pokemon.BaseExperience {
+		fmt.Println(pokemonName, " escaped!")
+		return nil
+	} else { // for fun, we'll say that the pokemon is caught if the random number is greater than the base experience
+		fmt.Println(pokemonName, " was caught!")
+	}
+	(*caughtPokemon)[pokemonName] = Pokemon{
+		Name:           pokemonName,
+		Id:             pokemon.Id,
+		BaseExperience: pokemon.BaseExperience,
+	}
+	fmt.Println("Caught Pokemons:---", *caughtPokemon)
 	return nil
 }
