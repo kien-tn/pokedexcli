@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"internal"
+	"io"
 	"net/http"
 	"os"
+	"time"
 )
 
 type cliCommand struct {
@@ -29,6 +32,7 @@ var commands map[string]cliCommand
 func main() {
 	loc := &LocArea{}
 	scanner := bufio.NewScanner(os.Stdin)
+	cache := internal.NewCache(time.Duration(time.Second * 5))
 	commands = map[string]cliCommand{
 		"exit": {
 			name:        "exit",
@@ -43,12 +47,20 @@ func main() {
 		"map": {
 			name:        "map",
 			description: "Display the names of 20 location areas in the Pokemon world",
-			callback:    func() error { return commandMap(loc) },
+			callback:    func() error { return commandMap(loc, cache) },
 		},
 		"mapb": {
 			name:        "mapb",
 			description: "Display the names of Previous 20 location areas in the Pokemon world",
-			callback:    func() error { return commandMapb(loc) },
+			callback:    func() error { return commandMapb(loc, cache) },
+		},
+		"lenc": {
+			name:        "len_cache",
+			description: "Display the length of the cache",
+			callback: func() error {
+				fmt.Println("Length of cache:---", len(cache.Items))
+				return nil
+			},
 		},
 	}
 	for {
@@ -86,44 +98,74 @@ func commandHelp() error {
 	}
 	return nil
 }
-func commandMap(loc *LocArea) error {
+func commandMap(loc *LocArea, cache *internal.Cache) error {
 	var url string
+	defer func() {
+		for _, r := range loc.Results {
+			fmt.Println(r.Name)
+		}
+	}()
 	if loc.Next == "" {
 		url = "https://pokeapi.co/api/v2/location-area/"
 	} else {
 		url = loc.Next
 	}
+	if val, exists := cache.Get(url); exists {
+		err := json.Unmarshal(val, loc)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	time.Sleep(time.Second * 2)
 	res, err := http.Get(url)
 	if err != nil {
 		return err
 	}
 	defer res.Body.Close()
-	decoder := json.NewDecoder(res.Body)
-	err = decoder.Decode(loc)
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		return err
 	}
-	for _, r := range loc.Results {
-		fmt.Println(r.Name)
+	cache.Add(url, body)
+	err = json.Unmarshal(body, loc)
+	if err != nil {
+		return err
 	}
+
 	return nil
 }
-func commandMapb(loc *LocArea) error {
+func commandMapb(loc *LocArea, cache *internal.Cache) error {
 	if loc.Previous == "" {
 		return nil
 	}
+	defer func() {
+		for _, r := range loc.Results {
+			fmt.Println(r.Name)
+		}
+	}()
+	if val, exists := cache.Get(loc.Previous); exists {
+		err := json.Unmarshal(val, loc)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	time.Sleep(time.Second * 2)
 	res, err := http.Get(loc.Previous)
 	if err != nil {
 		return err
 	}
 	defer res.Body.Close()
-	decoder := json.NewDecoder(res.Body)
-	err = decoder.Decode(&loc)
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		return err
 	}
-	for _, r := range loc.Results {
-		fmt.Println(r.Name)
+	cache.Add(loc.Previous, body)
+	err = json.Unmarshal(body, loc)
+	if err != nil {
+		return err
 	}
+
 	return nil
 }
